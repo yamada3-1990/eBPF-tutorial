@@ -16,51 +16,65 @@ struct {
     // マップの種類(今回はハッシュマップ)
     __uint(type, BPF_MAP_TYPE_HASH);
 
-    // 保存できるデータ(キー/値のペア)の最大件数
+    // 保存できるデータ(key/valueのペア)の最大件数
     __uint(max_entries, 16384);
 
-    // キーの定義
+    // keyの定義
     __type(key, struct path_key);
 
-    // 値の定義
+    // valueの定義
     __type(value, __u64);
 } exec_count SEC(".maps");
 
 SEC("tracepoint/syscalls/sys_enter_execve")
 int handle_execve_tp(struct trace_event_raw_sys_enter *ctx) {
-    // このプログラムは入力コンテキストであるstruct trace_event_raw_sys_enterの第1引数を読み取る
+    // このプログラムは入力コンテキストであるstruct trace_event_raw_sys_enter(vmlinux.hの中で定義されている)の第1引数を読み取る
+    // execveシステムコールの定義：int execve(const char *pathname, char *const _Nullable argv[], char *const _Nullable envp[]);
+    // だからargs[0]を指定するとpathnameが返ってくる
+    // pathname: 実行するファイルのパス
+    // argv: コマンドライン引数
+    // envp: 環境変数
     const char *filename = (const char *)ctx->args[0];
     
-    // * The second argument `ctx->args[1]` is `char *const argv[]` -> array of pointers to strings passed to the 
-    //   new program as its command-line arguments
-
-    // * The third argument `ctx->args[2]` is `char *const envp[]` -> array of pointers to strings, conventionally of 
-    //   the form key=value, which are passed as the environment of the new program (a.k.a. env variables)
-
-    // Instantiate and store the first argument as our key of the eBPF map using `bpf_probe_read_user_str` which is a
-    // handy eBPF helper function, to copy a NULL terminated string from an (unsafe) user address
+    
     struct path_key key = {};
+
+    // pathnameをインスタンス化する
+    // bpf_probe_read_user_str(ヘルパー関数): 安全でないユーザー空間のアドレスから文字列をコピーするための関数
     long n = bpf_probe_read_user_str(key.path, sizeof(key.path), filename);
-    // Validate the copy operation was succesfull
-    // On success, the strictly positive length of the output string, including the trailing NULL character is returned. 
-    // On error, a negative value is returned.
+
+    // コピーが成功したかをバリデーションする
+    // 成功したら出力文字列の長さ
+    // 失敗したら負の値
     if (n <= 0) {
         return 0;
     }
 
-    // Check whether this key (binary executable path) already exists in our map and 
+    // key(pathname)が既にマップ内にあるかを確認する
+
+    // bpf_map_lookup_elem(ヘルパー関数):
+    // void *bpf_map_lookup_elem(void *map, void *key);
+    // マップに保存されている値(value)へのポインタを探して返す
+    // https://prototype-kernel.readthedocs.io/en/latest/bpf/ebpf_maps.html#:~:text=Kernel%2Dside%20eBPF%20program
     __u64 *val = bpf_map_lookup_elem(&exec_count, &key);
+
+    // keyが既にマップ内にあったら
     if (val) {
-        // Update the value of the counter under that key we found in the map
-        // NOTE: this is not a safe way to update the value - we'll learn about atomic operations in the upcoming tutorial
+        // keyに対応するカウンターの値(value)を更新する
         *val += 1;
     } else {
-        // If this binary is executed for the first time since our eBPF application has been run, we just set the counter value to 1
+        // keyが無かったら(=初めて実行された)
+        // keyに対応するカウンターの値(value)を1に設定
         __u64 init = 1;
+
+        // bpf_map_update_elem(ヘルパー関数):
+        // int bpf_map_update_elem(void *map, void *key, void *value, unsigned long long flags);
+        // マップに新しいkey/valueペアを追加または更新
+        // flagsパラメータは更新の動作を制御する
         bpf_map_update_elem(&exec_count, &key, &init, BPF_NOEXIST);
     }
 
-    // Optional: print to debug
+    // デバッグ用
     bpf_printk("execve: %s\n", key.path);
 
     return 0;
