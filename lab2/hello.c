@@ -6,8 +6,6 @@ char _license[] SEC("license") = "GPL";
 
 #define MAX_PATH 256
 
-
-
 struct path_key {
     char path[MAX_PATH];
 };
@@ -35,7 +33,6 @@ int handle_execve_tp(struct trace_event_raw_sys_enter *ctx) {
     // argv: コマンドライン引数
     // envp: 環境変数
     const char *filename = (const char *)ctx->args[0];
-    
     
     struct path_key key = {};
 
@@ -71,6 +68,10 @@ int handle_execve_tp(struct trace_event_raw_sys_enter *ctx) {
         // int bpf_map_update_elem(void *map, void *key, void *value, unsigned long long flags);
         // マップに新しいkey/valueペアを追加または更新
         // flagsパラメータは更新の動作を制御する
+        // 第4引数のフラグは3種類ある
+        // BPF_ANY: 新しく作成するまたはアップデート
+        // BPF_NOEXIST: キーが存在しない場合のみ
+        // BPF_EXIST: キーが存在する場合のみ
         bpf_map_update_elem(&exec_count, &key, &init, BPF_NOEXIST);
     }
 
